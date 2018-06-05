@@ -24,6 +24,7 @@ class Attachment(ndb.Model):
     primaryValue = ndb.IntegerProperty()
     secondaryAttribute = ndb.StringProperty()
     secondaryValue = ndb.IntegerProperty()
+    attached_to = ndb.StringProperty()
 
 ##########       ROUTES     ########## 
 class MainPage(webapp2.RequestHandler):
@@ -53,6 +54,7 @@ class Weapons(webapp2.RequestHandler):
         new_weapon = Weapon(name=req['name'], damage=req['damage'], attribute=req['attribute'], 
                             firstTalent=req['firstTalent'], secondTalent=req['secondTalent'], 
                             freeTalent=req['freeTalent'], attachment=None)
+        new_weapon.attachment = None
         new_weapon.put()
         weapon_dict = new_weapon.to_dict()
         weapon_dict['self'] = '/weapons/' + new_weapon.key.urlsafe()
@@ -80,6 +82,7 @@ class Attachments(webapp2.RequestHandler):
         new_attachment = Attachment(name=req['name'], primaryAttribute=req['primaryAttribute'], 
                                     primaryValue=req['primaryValue'], secondaryAttribute=req['secondaryAttribute'],
                                     secondaryValue=req['secondaryValue'])
+        new_attachment.attached_to = None
         new_attachment.put()
         attachment_dict = new_attachment.to_dict()
         attachment_dict['self'] = '/attachments/' + new_attachment.key.urlsafe()
@@ -94,7 +97,7 @@ class AttachmentHandler(webapp2.RequestHandler):
                 attachment_dict = attachment.to_dict()
                 attachment_dict['self'] = '/attachments/' + id
                 attachment_dict['id'] = id
-                self.response.write(json.dumps(attachment_dict, default = dateConverter))
+                self.response.write(json.dumps(attachment_dict, indent=4, separators=(',', ': ')))
             else:
                 self.response.status = 403
                 self.response.write("No attachment found")
@@ -109,100 +112,94 @@ class AttachmentHandler(webapp2.RequestHandler):
                 self.response.status = 400
                 self.response.write("No attachment found")
                 return
-            bData = json.loads(self.request.body)
-            if 'name' in bData:
-                attachment.name = bData['name']
-            if 'type' in bData:
-                attachment.name = bData['type']
-            if 'length' in bData:
-                attachment.name = bData['length']
-            if 'at_sea' in bData:
-                #send attachment to sea
-                if bData['at_sea'] == True:
-                    #attachment is docked
-                    if attachment.at_sea == False:
-                        weapon = ndb.Key(urlsafe = attachment.weaponID).get()
+            req = json.loads(self.request.body)
+            if 'name' in req:
+                attachment.name = req['name']
+            if 'primaryAttribute' in req:
+                attachment.primaryAttribute = req['primaryAttribute']
+            if 'primaryValue' in req:
+                attachment.primaryValue = req['primaryValue']
+            if 'secondaryAttribute' in req:
+                attachment.secondaryAttribute = req['secondaryAttribute']
+            if 'secondaryValue' in req:
+                attachment.secondaryValue = req['secondaryValue']
+            if 'attached_to' in req:
+                #remove attachment 
+                if req['attached_to'] == None:
+                    #attachment is currently attached
+                    if attachment.attached_to != None:
+                        weapon = ndb.Key(urlsafe = attachment.attached_to).get()
                         if weapon != None:
-                            attachment.at_sea = True
-                            attachment.weaponID = None
-                            weapon.current_attachment = None
+                            attachment.attached_to = None
+                            weapon.attachment = None
                             weapon.put()
                             attachment.put()
                             self.response.status = 204
-                            self.response.write("Attachment now at sea")
+                            self.response.write("Attachment removed and updated")
                         else:
-                            self.response.status = 403
-                            self.response.write("Could not find weapon")
-                    #attachment already at sea
+                            #if could not find weapon, update attachment to be un-attached
+                            attachment.attached_to = None
+                            attachment.put()
+                            self.response.status = 204
+                            self.response.write("Could not find weapon - attachment updated")
+                    #attachment already un-attached
                     else:
-                        self.response.status = 403
-                        self.response.write("Attachment already at sea")
-                #dock attachment
+                        attachment.put()
+                        self.response.status = 204
+                        self.response.write("Attachment was not attached - attachment updated")
+                #attach attachment
                 else:
-                    if 'weaponID' in bData:
-                        if attachment.at_sea == True:
-                            weapon = ndb.Key(urlsafe = bData['weaponID']).get()
-                            if weapon == None:
-                                self.response.status = 403
-                                self.response.write("No weapon found")
-                            elif weapon.current_attachment != None:
-                                self.response.status = 403
-                                self.response.write("Weapon is occupied")
-                            else:
-                                weapon.current_attachment = attachment.key.urlsafe()
-                                attachment.weaponID = weapon.key.urlsafe()
-                                attachment.at_sea = False
-                                weapon.put()
-                                attachment.put()
-                                self.response.status = 204
-                                self.response.write("Attachment docked")
-                        #attachment already docked
-                        else:
-                            self.response.status = 403
-                            self.response.write("Attachment already docked")
-                    #no weaponID supplied
-                    else:
-                        self.response.status = 400
-                        self.response.write("No weapon found to dock at")
-            elif 'weaponID' in bData:
-                if attachment.at_sea == False:
-                    self.response.status = 403
-                    self.response.write("Attachment is already docked")
-                #attachment already at sea
-                else:
-                    weapon = ndb.Key(urlsafe = bData['weaponID']).get()
+                    weapon = ndb.Key(urlsafe = req['attached_to']).get()
                     if weapon == None:
                         self.response.status = 403
-                        self.response.write("No weapon found")
-                    elif weapon.current_attachment != None:
-                        self.response.status = 403
-                        self.response.write("Weapon is occupied")
-                    else:
-                        weapon.current_attachment = attachment.key.urlsafe()
-                        attachment.weaponID = weapon.key.urlsafe()
-                        attachment.at_sea = False
+                        self.response.write("Could not find specified weapon")
+                        return
+                    #if attachment is currently attached, remove from old weapon
+                    if attachment.attached_to != None:
+                        curWeapon = ndb.Key(urlsafe = attachment.attached_to).get()
+                        if curWeapon != None:
+                            curWeapon.attachment = None
+                            curWeapon.put()
+                            attachment.attached_to = None
+                    #new weapon does not have attachment
+                    if weapon.attachment == None:
+                        weapon.attachment = attachment.key.urlsafe()
+                        attachment.attached_to = weapon.key.urlsafe()
                         weapon.put()
                         attachment.put()
                         self.response.status = 204
-                        self.response.write("Attachment docked")
+                        self.response.write("Weapon attached and updated")
+                    #if new weapon has attachment
+                    else:
+                        curAttachment = ndb.Key(urlsafe = weapon.attachment).get()
+                        #set current attachment to free
+                        if curAttachment != None:
+                            curAttachment.attached_to = None
+                            curAttachment.put()
+                        attachment.attached_to = weapon.key.urlsafe()
+                        weapon.attachment = attachment.key.urlsafe()
+                        weapon.put()
+                        attachment.put()
+                        self.response.status = 204
+                        self.response.write("Old attachment removed - attachment updated")
             else:
                 attachment.put()
                 self.response.status = 204
                 self.response.write("Attachment updated")
         else:
             self.response.status = 403
-            self.response.write("No attachment found")
+            self.response.write("No attachment id supplied")
 
    def delete(self, id=None):
         if id:
             attachment = ndb.Key(urlsafe = id).get()
             if attachment:
-                weapon = None
-                if attachment.weaponID != None:
-                    weapon = ndb.Key(urlsafe = attachment.weaponID).get()
-                if weapon != None:
-                    weapon.current_attachment = None
-                    weapon.put()
+                #if attachment is attached to a weapon - remove it
+                if attachment.attached_to != None:
+                    weapon = ndb.Key(urlsafe = attachment.attached_to).get()
+                    if weapon != None:
+                        weapon.attachment = None
+                        weapon.put()
                 attachment.key.delete()
                 self.response.status = 204
                 self.response.write("Attachment Removed")
@@ -221,7 +218,7 @@ class WeaponHandler(webapp2.RequestHandler):
                 weapon_dict = weapon.to_dict()
                 weapon_dict['self'] = '/weapons/' + id
                 weapon_dict['id'] = id
-                self.response.write(json.dumps(weapon_dict, default = dateConverter))
+                self.response.write(json.dumps(weapon_dict, indent=4, separators=(',', ': ')))
             else:
                 self.response.status = 403
                 self.response.write("No weapon found")
@@ -232,46 +229,102 @@ class WeaponHandler(webapp2.RequestHandler):
    def put(self, id=None):
         if id:
             weapon = ndb.Key(urlsafe = id).get()
-            sData = json.loads(self.request.body)
-            if 'arrival_date' in sData:
-                dateObj = datetime.date.strptime(sData['arrival_date'], '%Y-%m-%d')
-                weapon.arrival_date = dateObj
-            if 'current_attachment' in sData:
-                attachment = ndb.Key(urlsafe = sData['current_attachment']).get()
-                if attachment == None:
-                    self.response.status = 403
-                    self.response.write("No attachment found")
-                elif weapon.current_attachment != None:
-                    self.response.status = 403
-                    self.response.write("Another attachment already docked at weapon")
-                elif attachment.at_sea == False:
-                    self.response.status = 403
-                    self.response.write("Attachment already docked")
+            if weapon == None:
+                self.response.status = 400
+                self.response.write("No weapon found")
+                return
+            req = json.loads(self.request.body)
+            if 'name' in req:
+                weapon.name = req['name']
+            if 'damage' in req:
+                weapon.damage = req['damage']
+            if 'attribute' in req:
+                weapon.attribute = req['attribute']
+            if 'firstTalent' in req:
+                weapon.firstTalent = req['firstTalent']
+            if 'secondTalent' in req:
+                weapon.secondTalent = req['secondTalent']
+            if 'freeTalent' in req:
+                weapon.freeTalent = req['freeTalent']
+            #update weapon attachment
+            if 'attachment' in req:
+                #remove attachment 
+                if req['attachment'] == None:
+                    #weapon is currently attached
+                    if weapon.attachment != None:
+                        attachTemp = ndb.Key(urlsafe = weapon.attachment).get()
+                        if attachTemp != None:
+                            weapon.attachment = None
+                            attachTemp.attached_to = None
+                            attachTemp.put()
+                            weapon.put()
+                            self.response.status = 204
+                            self.response.write("Attachment removed and updated")
+                        else:
+                            #if could not find attachTemp, update weapon to be un-attached
+                            weapon.attachment = None
+                            weapon.put()
+                            self.response.status = 204
+                            self.response.write("Could not find attachTemp - weapon updated")
+                    #weapon already un-attached
+                    else:
+                        #add other updates
+                        weapon.put()
+                        self.response.status = 204
+                        self.response.write("Attachment was not attached - weapon updated")
+                #add new attachment
                 else:
-                    weapon.current_attachment = sData['current_attachment']
-                    attachment.weaponID = weapon.key.urlsafe()
-                    attachment.at_sea = False
-                    weapon.arrival_date = datetime.date.today()
-                    weapon.put()
-                    attachment.put()
-                    self.response.status = 204
-                    self.response.write("Attachment docked")
+                    newAttach = ndb.Key(urlsafe = req['attachment']).get()
+                    if newAttach == None:
+                        self.response.status = 403
+                        self.response.write("Could not find specified attachment")
+                        return
+                    #if weapon has attachment, remove old
+                    if weapon.attachment != None:
+                        curAttach = ndb.Key(urlsafe = weapon.attachment).get()
+                        if curAttach != None:
+                            curAttach.attached_to = None
+                            curAttach.put()
+                            weapon.attachment = None
+                    #new attachment is not currently on a weapon
+                    if newAttach.attached_to == None:
+                        newAttach.attached_to = weapon.key.urlsafe()
+                        weapon.attachment = newAttach.key.urlsafe()
+                        newAttach.put()
+                        weapon.put()
+                        self.response.status = 204
+                        self.response.write("Attachment added and weapon updated")
+                    #new attachment is already attached to a weapon
+                    else:
+                        curWeapon = ndb.Key(urlsafe = newAttach.attached_to).get()
+                        #set current weapon to free
+                        if curWeapon != None:
+                            curWeapon.attachment = None
+                            curWeapon.put()
+                        weapon.attachment = newAttach.key.urlsafe()
+                        newAttach.attached_to = weapon.key.urlsafe()
+                        newAttach.put()
+                        weapon.put()
+                        self.response.status = 204
+                        self.response.write("New attachment removed from old weapon and added to current")
             else:
+                weapon.put()
                 self.response.status = 204
-                self.response.write("Arrival date updated")
+                self.response.write("Weapon updated")
         else:
-            self.response.status = 400
-            self.response.write("No id supplied")
+            self.response.status = 403
+            self.response.write("No weapon id supplied")
 
    def delete(self, id=None):
         if id:
             weapon = ndb.Key(urlsafe = id).get()
             if weapon:
-                attachment = ndb.Key(urlsafe = weapon.current_attachment).get()
-                if attachment != None:
-                    attachment.at_sea = True
-                    attachment.weaponID = None
-                    attachment.put()
+                if weapon.attachment:
+                    attachment = ndb.Key(urlsafe = weapon.attachment).get()
+                    #if weapon has attachment - remove it
+                    if attachment != None:
+                        attachment.attached_to = None
+                        attachment.put()
                 weapon.key.delete()
                 self.response.status = 204
                 self.response.write("Weapon Removed")
